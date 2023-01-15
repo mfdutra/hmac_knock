@@ -1,0 +1,8 @@
+bind = ":::12345"
+hmac_secret = "super_SECRET_default"
+max_time_skew = 2
+
+# {} will be replaced by the calling IP address
+command_open = "/bin/echo {} bla"
+open_timeout = 4
+command_close = "/usr/bin/true {} {} x {}"

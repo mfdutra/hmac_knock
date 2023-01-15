@@ -1,0 +1,29 @@
+[package]
+name = "hmac_knock"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hmac_knock_client"
+path = "src/client/main.rs"
+
+[[bin]]
+name = "hmac_knock_server"
+path = "src/server/main.rs"
+
+[lib]
+name = "hmac_knock_lib"
+path = "src/lib/lib.rs"
+
+[dependencies]
+anyhow = "1.0.68"
+clap = { version = "4.1.0", features = ["derive"] }
+hmac = "0.12.1"
+serde = "1.0.152"
+serde_derive = "1.0.152"
+serdeconv = "0.4.0"
+sha2 = "0.10.6"
+slog = "2.7.0"
+sloggers = "2.1.1"
+tokio = { version = "1.24.1", features = ["full"] }
+toml = "0.5.10"

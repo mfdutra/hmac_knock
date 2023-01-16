@@ -1,5 +1,7 @@
 # hmac_knock
 
+[![Rust](https://github.com/mfdutra/hmac_knock/actions/workflows/rust.yml/badge.svg)](https://github.com/mfdutra/hmac_knock/actions/workflows/rust.yml)
+
 Very secure port knocking server/client, using HMAC'd messages.
 
 Port knocking is great for poking temporary holes in a firewall to let you in, without leaving daemons like sshd exposed permanently to the wild.

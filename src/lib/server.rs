@@ -166,40 +166,4 @@ impl ServerHandlerIOTrait for ServerHandlerIO {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use sloggers::terminal::{Destination, TerminalLoggerBuilder};
-    use sloggers::types::Severity;
-    use sloggers::Build;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
-    #[tokio::test]
-    async fn test1() {
-        let mut mock = MockServerHandlerIOTrait::new();
-        mock.expect_run().never();
-
-        let buffer = [0; 40];
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
-
-        let mut builder = TerminalLoggerBuilder::new();
-        builder.level(Severity::Info);
-        builder.destination(Destination::Stderr);
-        let logger = builder.build().unwrap();
-
-        let config = ServerConfig {
-            bind: String::from(""),
-            hmac_secret: String::from("test_secret_test_test"),
-            command_open: String::from(""),
-            command_close: String::from(""),
-            open_timeout: 0,
-            max_time_skew: 2.0,
-        };
-
-        if let Err(HandlerError::TokenExpired(_)) =
-            handler_inner(&mock, buffer, addr, &logger, config).await
-        {
-        } else {
-            panic!();
-        }
-    }
-}
+mod tests; // src/lib/server/tests.rs

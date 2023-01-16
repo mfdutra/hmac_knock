@@ -3,6 +3,6 @@ hmac_secret = "super_SECRET_default"
 max_time_skew = 2
 
 # {} will be replaced by the calling IP address
-command_open = "/bin/echo {} bla"
+command_open = "/usr/bin/true {}"
 open_timeout = 4
 command_close = "/usr/bin/true {}"

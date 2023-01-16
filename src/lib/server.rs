@@ -18,9 +18,10 @@ use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use serde_derive::Deserialize;
 use sha2::Sha256;
-use slog::{error, info, warn, Logger};
+use slog::{debug, error, info, warn, Logger};
 use std::net::SocketAddr;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::process::Command;
 use tokio::time::sleep;
 
@@ -37,19 +38,34 @@ pub struct ServerConfig {
     pub max_time_skew: f64,
 }
 
+#[derive(Error, Debug)]
+enum HandlerError {
+    #[error("Token is invalid or expired from {0}")]
+    TokenExpired(String),
+    #[error("HMAC signature is invalid from {0}")]
+    InvalidMac(String),
+    #[error("Command open failed")]
+    CommandOpenFailed,
+    #[error("Command close failed")]
+    CommandCloseFailed,
+}
+
 // Wrapper around handler_inner, to inject ServerHandlerIOTrait dependency
 pub async fn handler(buffer: [u8; 40], addr: SocketAddr, logger: Logger, config: ServerConfig) {
     let svio = ServerHandlerIO;
-    handler_inner(&svio, buffer, addr, logger, config).await
+    match handler_inner(&svio, buffer, addr, &logger, config).await {
+        Ok(()) => (),
+        Err(e) => error!(logger, "{}", e),
+    }
 }
 
 async fn handler_inner(
     svio: &impl ServerHandlerIOTrait,
     buffer: [u8; 40],
     addr: SocketAddr,
-    logger: Logger,
+    logger: &Logger,
     config: ServerConfig,
-) {
+) -> Result<(), HandlerError> {
     // First 8 bytes: f64 message timestamp
     // Last 32 bytes: HMAC signature
     let message = &buffer[..8];
@@ -73,11 +89,7 @@ async fn handler_inner(
 
     // Check for time skew and abort now
     if (time() - message_ts).abs() > config.max_time_skew {
-        warn!(
-            logger,
-            "Invalid or expired message from {}: {}", &addr, &message_ts
-        );
-        return;
+        return Err(HandlerError::TokenExpired(addr.to_string()));
     }
 
     type HmacSha256 = Hmac<Sha256>;
@@ -91,16 +103,22 @@ async fn handler_inner(
 
             let cmd_open = config.command_open.replace("{}", &source_ip);
             info!(logger, "Executing open command: {}", &cmd_open);
-            svio.run(&logger, &cmd_open).await;
+            if let Err(_) = svio.run(&logger, &cmd_open).await {
+                return Err(HandlerError::CommandOpenFailed);
+            }
 
             info!(logger, "Sleeping for {} seconds", &config.open_timeout);
             sleep(Duration::from_secs(config.open_timeout.into())).await;
 
             let cmd_close = config.command_close.replace("{}", &source_ip);
             info!(logger, "Executing close command: {}", &cmd_close);
-            svio.run(&logger, &cmd_close).await;
+            if let Err(_) = svio.run(&logger, &cmd_close).await {
+                return Err(HandlerError::CommandCloseFailed);
+            }
+
+            Ok(())
         }
-        Err(..) => warn!(logger, "Invalid HMAC signature"),
+        Err(..) => Err(HandlerError::InvalidMac(addr.to_string())),
     }
 }
 
@@ -110,12 +128,12 @@ struct ServerHandlerIO;
 #[cfg_attr(test, automock)]
 #[async_trait]
 trait ServerHandlerIOTrait {
-    async fn run(&self, logger: &Logger, command: &str);
+    async fn run(&self, logger: &Logger, command: &str) -> Result<(), ()>;
 }
 
 #[async_trait]
 impl ServerHandlerIOTrait for ServerHandlerIO {
-    async fn run(&self, logger: &Logger, command: &str) {
+    async fn run(&self, logger: &Logger, command: &str) -> Result<(), ()> {
         let cmd_open = Command::new("/bin/sh").arg("-c").arg(command).spawn();
 
         match cmd_open {
@@ -132,14 +150,18 @@ impl ServerHandlerIOTrait for ServerHandlerIO {
                         }
                     }
                     Err(..) => {
-                        error!(logger, "Command failed to run");
+                        debug!(logger, "Command failed to run");
+                        return Err(());
                     }
                 }
             }
             Err(..) => {
-                error!(logger, "Command failed to start");
+                debug!(logger, "Command failed to start");
+                return Err(());
             }
         }
+
+        Ok(())
     }
 }
 
@@ -173,6 +195,11 @@ mod tests {
             max_time_skew: 2.0,
         };
 
-        handler_inner(&mock, buffer, addr, logger, config).await;
+        if let Err(HandlerError::TokenExpired(_)) =
+            handler_inner(&mock, buffer, addr, &logger, config).await
+        {
+        } else {
+            panic!();
+        }
     }
 }

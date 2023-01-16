@@ -122,7 +122,7 @@ async fn valid_run() {
         max_time_skew: 2.0,
     };
 
-    // Send correct time, but do not sign anything
+    // Send correct time
     let now_bytes: [u8; 8] = time().to_le_bytes();
     let mut message = [0; 40];
 
@@ -167,7 +167,7 @@ async fn command_error() {
         max_time_skew: 2.0,
     };
 
-    // Send correct time, but do not sign anything
+    // Send correct time
     let now_bytes: [u8; 8] = time().to_le_bytes();
     let mut message = [0; 40];
 

@@ -14,6 +14,7 @@
 // with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use super::utils::time;
+use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use serde_derive::Deserialize;
 use sha2::Sha256;
@@ -22,6 +23,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::sleep;
+
+#[cfg(test)]
+use mockall::{automock, predicate::*};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ServerConfig {
@@ -33,7 +37,19 @@ pub struct ServerConfig {
     pub max_time_skew: f64,
 }
 
+// Wrapper around handler_inner, to inject ServerHandlerIOTrait dependency
 pub async fn handler(buffer: [u8; 40], addr: SocketAddr, logger: Logger, config: ServerConfig) {
+    let svio = ServerHandlerIO;
+    handler_inner(&svio, buffer, addr, logger, config).await
+}
+
+async fn handler_inner(
+    svio: &impl ServerHandlerIOTrait,
+    buffer: [u8; 40],
+    addr: SocketAddr,
+    logger: Logger,
+    config: ServerConfig,
+) {
     // First 8 bytes: f64 message timestamp
     // Last 32 bytes: HMAC signature
     let message = &buffer[..8];
@@ -75,42 +91,88 @@ pub async fn handler(buffer: [u8; 40], addr: SocketAddr, logger: Logger, config:
 
             let cmd_open = config.command_open.replace("{}", &source_ip);
             info!(logger, "Executing open command: {}", &cmd_open);
-            run(&logger, &cmd_open).await;
+            svio.run(&logger, &cmd_open).await;
 
             info!(logger, "Sleeping for {} seconds", &config.open_timeout);
             sleep(Duration::from_secs(config.open_timeout.into())).await;
 
             let cmd_close = config.command_close.replace("{}", &source_ip);
             info!(logger, "Executing close command: {}", &cmd_close);
-            run(&logger, &cmd_close).await;
+            svio.run(&logger, &cmd_close).await;
         }
         Err(..) => warn!(logger, "Invalid HMAC signature"),
     }
 }
 
-async fn run(logger: &Logger, command: &str) {
-    let cmd_open = Command::new("/bin/sh").arg("-c").arg(command).spawn();
+// ServerHandlerIO has the code that unit tests cannot run
+struct ServerHandlerIO;
 
-    match cmd_open {
-        Ok(mut child) => {
-            let status = child.wait().await;
-            match status {
-                Ok(s) => {
-                    if !s.success() {
-                        warn!(
-                            logger,
-                            "Command executed but exited with status {}",
-                            s.code().unwrap_or(255)
-                        );
+#[cfg_attr(test, automock)]
+#[async_trait]
+trait ServerHandlerIOTrait {
+    async fn run(&self, logger: &Logger, command: &str);
+}
+
+#[async_trait]
+impl ServerHandlerIOTrait for ServerHandlerIO {
+    async fn run(&self, logger: &Logger, command: &str) {
+        let cmd_open = Command::new("/bin/sh").arg("-c").arg(command).spawn();
+
+        match cmd_open {
+            Ok(mut child) => {
+                let status = child.wait().await;
+                match status {
+                    Ok(s) => {
+                        if !s.success() {
+                            warn!(
+                                logger,
+                                "Command executed but exited with status {}",
+                                s.code().unwrap_or(255)
+                            );
+                        }
+                    }
+                    Err(..) => {
+                        error!(logger, "Command failed to run");
                     }
                 }
-                Err(..) => {
-                    error!(logger, "Command failed to run");
-                }
+            }
+            Err(..) => {
+                error!(logger, "Command failed to start");
             }
         }
-        Err(..) => {
-            error!(logger, "Command failed to start");
-        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sloggers::terminal::{Destination, TerminalLoggerBuilder};
+    use sloggers::types::Severity;
+    use sloggers::Build;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[tokio::test]
+    async fn test1() {
+        let mut mock = MockServerHandlerIOTrait::new();
+        mock.expect_run().never();
+
+        let buffer = [0; 40];
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+
+        let mut builder = TerminalLoggerBuilder::new();
+        builder.level(Severity::Info);
+        builder.destination(Destination::Stderr);
+        let logger = builder.build().unwrap();
+
+        let config = ServerConfig {
+            bind: String::from(""),
+            hmac_secret: String::from("test_secret_test_test"),
+            command_open: String::from(""),
+            command_close: String::from(""),
+            open_timeout: 0,
+            max_time_skew: 2.0,
+        };
+
+        handler_inner(&mock, buffer, addr, logger, config).await;
     }
 }
